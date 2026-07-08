@@ -1,10 +1,10 @@
 const styles = {
-  Meta:   { background: 'var(--green-80light)', color: 'var(--green-60dark)'  },
-  Google: { background: 'var(--cinza)',          color: 'var(--grafite)' },
+  Meta:   { background: 'var(--blue-bg)',  color: 'var(--blue)'  },
+  Google: { background: 'var(--coral-bg)', color: 'var(--coral)' },
 }
 
 export function ChannelBadge({ channel }) {
-  const s = styles[channel] || { background: 'var(--cinza)', color: 'var(--muted)' }
+  const s = styles[channel] || { background: 'var(--bg)', color: 'var(--muted)' }
   return (
     <span style={{
       ...s,
