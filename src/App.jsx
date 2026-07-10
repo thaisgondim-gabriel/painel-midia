@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { useData, useYearData, useMetaAdsDetail, MONTHS, resolveMonths, resolveDateRange } from './hooks/useData.js'
+import { useData, useYearData, useMetaAdsDetail, useComunidadeData, useComunidadeYearData, MONTHS, resolveMonths, resolveDateRange } from './hooks/useData.js'
 import { Overview } from './pages/Overview.jsx'
 import { MetaAdsDetail } from './pages/MetaAdsDetail.jsx'
+import { ComunidadeOverview } from './pages/ComunidadeOverview.jsx'
 
 const STATES = [
   { key: 'ALL', label: 'Geral' },
@@ -11,15 +12,31 @@ const STATES = [
   { key: 'ES',  label: 'ES', disabled: true },
 ]
 
+// Estados da view Comunidade usam a sigla real (vem direto da propriedade
+// "estado" do HubSpot), diferente da mídia paga que usa "BH" internamente
+// pro nome de campanha de Minas Gerais.
+const STATES_COMUNIDADE = [
+  { key: 'ALL', label: 'Geral' },
+  { key: 'SP',  label: 'SP' },
+  { key: 'RJ',  label: 'RJ' },
+  { key: 'MG',  label: 'MG' },
+  { key: 'ES',  label: 'ES' },
+]
+
 const NETWORKS = [
   { key: 'ALL',    label: 'Geral' },
   { key: 'Meta',   label: 'Meta' },
   { key: 'Google', label: 'Google' },
 ]
 
-const VIEWS = [
+const SECTIONS = [
+  { key: 'midiaPaga',   label: 'Mídia Paga', icon: '💰' },
+  { key: 'comunidade',  label: 'Comunidade', icon: '🌱' },
+]
+
+const SUBVIEWS = [
   { key: 'overview', label: 'Visão geral' },
-  { key: 'ads',       label: 'Detalhamento Meta Ads' },
+  { key: 'ads',      label: 'Detalhamento Meta Ads' },
 ]
 
 const MONTH_NAMES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
@@ -278,6 +295,7 @@ function DateRangePicker({ startDate, endDate, onChange }) {
 const SELECTED_BG    = '#0afc33'
 const SELECTED_COLOR = '#0d3b1f'
 const MAX_WIDTH      = 1200
+const SIDEBAR_WIDTH  = 208
 
 export default function App() {
   const today = new Date()
@@ -291,8 +309,15 @@ export default function App() {
   const [startDate, setStartDate]             = useState(firstOfMonth)
   const [endDate, setEndDate]                 = useState(lastOfMonth)
   const [selectedState, setSelectedState]     = useState('ALL')
+  const [selectedStateComunidade, setSelectedStateComunidade] = useState('ALL')
   const [selectedNetwork, setSelectedNetwork] = useState('ALL')
-  const [view, setView]                       = useState('overview')
+
+  // Hierarquia de navegação: seção de topo (Mídia Paga / Comunidade) na
+  // sidebar, e sub-aba (Visão geral / Detalhamento Meta Ads) só dentro de
+  // Mídia Paga. `view` deriva os dois pra manter o resto da lógica igual.
+  const [section, setSection] = useState('midiaPaga') // 'midiaPaga' | 'comunidade'
+  const [subView, setSubView] = useState('overview')  // 'overview' | 'ads' (só usado dentro de midiaPaga)
+  const view = section === 'comunidade' ? 'comunidade' : subView
 
   const dateRange = useMemo(() => ({ startDate, endDate }), [startDate, endDate])
 
@@ -330,6 +355,7 @@ export default function App() {
     setStartDate(firstOfMonth)
     setEndDate(lastOfMonth)
     setSelectedState('ALL')
+    setSelectedStateComunidade('ALL')
     setSelectedNetwork('ALL')
   }
 
@@ -339,6 +365,11 @@ export default function App() {
   // Alimenta as barras mensais da Performance Regional, que não devem
   // respeitar o filtro de data (só o de rede/estado).
   const { yearData } = useYearData(lastFetch)
+
+  // Comunidade (leads orgânicos) — fetch próprio, mesmo padrão do painel de
+  // mídia paga, mas via webhook dedicado (sem Meta/Google/planejamento).
+  const { data: comunidadeData, loading: comunidadeLoading, lastFetch: comunidadeLastFetch, refresh: refreshComunidade } = useComunidadeData(dateRange)
+  const { yearData: comunidadeYearData } = useComunidadeYearData(comunidadeLastFetch)
 
   // Detalhamento de anúncios (Meta Ads) — página separada, com seu próprio
   // fetch/mock. Chamado sempre (regra dos hooks), só é renderizado quando
@@ -363,38 +394,76 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', fontFamily: 'DM Sans, sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', fontFamily: 'DM Sans, sans-serif', display: 'flex' }}>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
 
-      {/* Header */}
-      <header style={{ background: 'var(--surface)', borderBottom: '0.5px solid var(--border)', height: 56, position: 'sticky', top: 0, zIndex: 20 }}>
-        <div style={{ ...innerStyle, justifyContent: 'space-between', height: '100%' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--green)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ color: '#fff', fontWeight: 800, fontSize: 14, lineHeight: 1 }}>G</span>
-              </div>
-              <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', letterSpacing: '-0.01em' }}>Painel de mídia paga</span>
-            </div>
-            <nav style={{ display: 'flex', gap: 4 }}>
-              {VIEWS.map(v => (
-                <button key={v.key} onClick={() => setView(v.key)} style={btnStyle(view === v.key)}>
+      {/* Sidebar */}
+      <aside style={{
+        width: SIDEBAR_WIDTH, flexShrink: 0, background: 'var(--surface)',
+        borderRight: '0.5px solid var(--border)', position: 'sticky', top: 0,
+        height: '100vh', display: 'flex', flexDirection: 'column', padding: '20px 12px',
+        boxSizing: 'border-box', gap: 24,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 8px' }}>
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--green)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <span style={{ color: '#fff', fontWeight: 800, fontSize: 14, lineHeight: 1 }}>G</span>
+          </div>
+          <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', letterSpacing: '-0.01em' }}>Painel de Leads</span>
+        </div>
+
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {SECTIONS.map(s => {
+            const active = section === s.key
+            return (
+              <button
+                key={s.key}
+                onClick={() => setSection(s.key)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '9px 12px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif', fontSize: 13, fontWeight: 600, textAlign: 'left',
+                  background: active ? SELECTED_BG : 'transparent',
+                  color: active ? SELECTED_COLOR : 'var(--muted)',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <span style={{ fontSize: 15 }}>{s.icon}</span>
+                {s.label}
+              </button>
+            )
+          })}
+        </nav>
+      </aside>
+
+      {/* Coluna principal */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+
+        {/* Header */}
+        <header style={{ background: 'var(--surface)', borderBottom: '0.5px solid var(--border)', height: 56, position: 'sticky', top: 0, zIndex: 20 }}>
+          <div style={{ ...innerStyle, justifyContent: 'space-between', height: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              {section === 'midiaPaga' && SUBVIEWS.map(v => (
+                <button key={v.key} onClick={() => setSubView(v.key)} style={btnStyle(subView === v.key)}>
                   {v.label}
                 </button>
               ))}
-            </nav>
+              {section === 'comunidade' && (
+                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Comunidade</span>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {(view === 'comunidade' ? comunidadeLastFetch : lastFetch) && (
+                <span style={{ fontSize: 11, color: 'var(--hint)' }}>Atualizado às {fmt(view === 'comunidade' ? comunidadeLastFetch : lastFetch)}</span>
+              )}
+              <button onClick={handleReset} disabled={loading || comunidadeLoading} style={{ ...btnBase, padding: '5px 12px', background: 'transparent', border: '0.5px solid var(--border)', color: 'var(--muted)', opacity: (loading || comunidadeLoading) ? 0.5 : 1 }}>
+                Redefinir
+              </button>
+              <button onClick={view === 'comunidade' ? refreshComunidade : refresh} disabled={view === 'comunidade' ? comunidadeLoading : loading} style={{ ...btnBase, padding: '5px 12px', background: 'transparent', border: '0.5px solid var(--border)', color: 'var(--muted)', opacity: (view === 'comunidade' ? comunidadeLoading : loading) ? 0.5 : 1 }}>
+                {(view === 'comunidade' ? comunidadeLoading : loading) ? 'Atualizando…' : '↻ Atualizar'}
+              </button>
+            </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {lastFetch && <span style={{ fontSize: 11, color: 'var(--hint)' }}>Atualizado às {fmt(lastFetch)}</span>}
-            <button onClick={handleReset} disabled={loading} style={{ ...btnBase, padding: '5px 12px', background: 'transparent', border: '0.5px solid var(--border)', color: 'var(--muted)', opacity: loading ? 0.5 : 1 }}>
-              Redefinir
-            </button>
-            <button onClick={refresh} disabled={loading} style={{ ...btnBase, padding: '5px 12px', background: 'transparent', border: '0.5px solid var(--border)', color: 'var(--muted)', opacity: loading ? 0.5 : 1 }}>
-              {loading ? 'Atualizando…' : '↻ Atualizar'}
-            </button>
-          </div>
-        </div>
-      </header>
+        </header>
 
       {/* Barra de filtros */}
       <div style={{ background: 'var(--surface)', borderBottom: '0.5px solid var(--border)', position: 'sticky', top: 56, zIndex: 15 }}>
@@ -439,16 +508,20 @@ export default function App() {
           {/* Estado */}
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: 'var(--hint)', marginRight: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Estado</span>
-            {STATES.map(s => (
-              <button key={s.key} onClick={() => !s.disabled && setSelectedState(s.key)} disabled={s.disabled}
-                title={s.disabled ? 'Em breve' : undefined}
-                style={{ ...btnStyle(selectedState === s.key && !s.disabled), opacity: s.disabled ? 0.4 : 1, cursor: s.disabled ? 'not-allowed' : 'pointer', color: s.disabled ? 'var(--border)' : selectedState === s.key ? SELECTED_COLOR : 'var(--muted)' }}>
-                {s.label}
-              </button>
-            ))}
+            {(view === 'comunidade' ? STATES_COMUNIDADE : STATES).map(s => {
+              const current = view === 'comunidade' ? selectedStateComunidade : selectedState
+              const setCurrent = view === 'comunidade' ? setSelectedStateComunidade : setSelectedState
+              return (
+                <button key={s.key} onClick={() => !s.disabled && setCurrent(s.key)} disabled={s.disabled}
+                  title={s.disabled ? 'Em breve' : undefined}
+                  style={{ ...btnStyle(current === s.key && !s.disabled), opacity: s.disabled ? 0.4 : 1, cursor: s.disabled ? 'not-allowed' : 'pointer', color: s.disabled ? 'var(--border)' : current === s.key ? SELECTED_COLOR : 'var(--muted)' }}>
+                  {s.label}
+                </button>
+              )
+            })}
           </div>
 
-          {/* Rede — só faz sentido na Visão geral, já que Detalhamento é Meta-only */}
+          {/* Rede — só faz sentido na Visão geral, já que Detalhamento é Meta-only e Comunidade não tem rede paga */}
           {view === 'overview' && (
             <>
               <div style={{ width: 1, height: 20, background: 'var(--border)' }} />
@@ -493,6 +566,30 @@ export default function App() {
           </>
         )}
 
+        {view === 'comunidade' && (
+          <>
+            {comunidadeLoading && comunidadeData && (
+              <div style={{ position: 'absolute', inset: 0, zIndex: 10, background: 'rgba(0,0,0,0.18)', borderRadius: 12, backdropFilter: 'blur(1.5px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 40 }}>
+                <div style={{ background: 'var(--surface)', border: '0.5px solid var(--border)', borderRadius: 12, padding: '14px 22px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid var(--border)', borderTopColor: '#0afc33', animation: 'spin 0.7s linear infinite' }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Atualizando dados…</span>
+                </div>
+              </div>
+            )}
+            {comunidadeLoading && !comunidadeData && (
+              <div style={{ textAlign: 'center', padding: '80px 0', color: 'var(--hint)', fontSize: 13 }}>Buscando dados…</div>
+            )}
+            {comunidadeData && (
+              <ComunidadeOverview
+                data={comunidadeData}
+                yearData={comunidadeYearData}
+                periodLabel={periodLabel}
+                selectedState={selectedStateComunidade}
+              />
+            )}
+          </>
+        )}
+
         {view === 'ads' && (
           <MetaAdsDetail
             detailData={detailData}
@@ -502,6 +599,7 @@ export default function App() {
           />
         )}
       </main>
+      </div>
     </div>
   )
 }

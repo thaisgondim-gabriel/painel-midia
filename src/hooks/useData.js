@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 
 const N8N_ENDPOINT = 'https://n8n.gabriel.com.br/webhook/painel-midia'
+const N8N_COMUNIDADE_ENDPOINT = 'https://n8n.gabriel.com.br/webhook/painel-comunidade'
 
 export const STATE_MAP = {
   SP: { label: 'São Paulo', abbr: 'SP' },
@@ -137,6 +138,110 @@ export function useYearData(refreshTick = 0) {
         }
       } catch (err) {
         console.warn('n8n indisponível (ano):', err.message)
+        if (!cancelled) setYearError(err.message)
+      } finally {
+        if (!cancelled) setYearLoading(false)
+      }
+    }
+
+    doFetch()
+    const interval = setInterval(doFetch, REFRESH_INTERVAL)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [refreshTick]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return { yearData, yearLoading, yearError }
+}
+
+// ---------------------------------------------------------------------------
+// Comunidade (leads orgânicos — não pagos): busca leads/lav/ganhos/segmentação
+// e breakdown diário por canal a partir do webhook dedicado.
+// ---------------------------------------------------------------------------
+
+export const CHANNELS = ['Pesquisa orgânica', 'Tráfego direto', 'Social orgânico', 'Referências', 'Referências de IA']
+
+export const CHANNEL_COLORS = {
+  'Pesquisa orgânica':   '#0afc33',
+  'Tráfego direto':      '#1A6FE8',
+  'Social orgânico':     '#f59e0b',
+  'Referências':         '#8b5cf6',
+  'Referências de IA':   '#ef4444',
+}
+
+export function useComunidadeData(dateRange) {
+  const [data, setData]           = useState(null)
+  const [loading, setLoading]     = useState(true)
+  const [error, setError]         = useState(null)
+  const [lastFetch, setLastFetch] = useState(null)
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  const rangeKey = `${dateRange.startDate}|${dateRange.endDate}`
+
+  useEffect(() => {
+    let cancelled = false
+
+    const doFetch = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const { startDate, endDate } = dateRange
+        const params = new URLSearchParams({ startDate, endDate })
+        const res = await fetch(`${N8N_COMUNIDADE_ENDPOINT}?${params}`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const json = await res.json()
+        if (!cancelled) setData(json)
+      } catch (err) {
+        console.warn('n8n (comunidade) indisponível:', err.message)
+        if (!cancelled) setError(err.message)
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+          setLastFetch(new Date())
+        }
+      }
+    }
+
+    doFetch()
+    const interval = setInterval(doFetch, REFRESH_INTERVAL)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [rangeKey, refreshTick]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const refresh = useCallback(() => {
+    setRefreshTick(t => t + 1)
+  }, [])
+
+  return { data, loading, error, lastFetch, refresh }
+}
+
+// Busca independente do filtro de período do topo — sempre 01/01 até hoje.
+// Alimenta a Performance Regional da Comunidade, mesmo padrão do useYearData.
+export function useComunidadeYearData(refreshTick = 0) {
+  const [yearData, setYearData]     = useState(null)
+  const [yearLoading, setYearLoading] = useState(true)
+  const [yearError, setYearError]   = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const doFetch = async () => {
+      setYearLoading(true)
+      setYearError(null)
+      try {
+        const { startDate, endDate } = resolveYearToDateRange()
+        const params = new URLSearchParams({ startDate, endDate })
+        const res = await fetch(`${N8N_COMUNIDADE_ENDPOINT}?${params}`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const json = await res.json()
+        if (!cancelled) setYearData(json)
+      } catch (err) {
+        console.warn('n8n (comunidade, ano) indisponível:', err.message)
         if (!cancelled) setYearError(err.message)
       } finally {
         if (!cancelled) setYearLoading(false)
