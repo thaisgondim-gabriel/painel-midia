@@ -14,15 +14,15 @@ const NUM = (v) => (v ?? 0).toLocaleString('pt-BR')
 const PCT = (v) => `${(v ?? 0).toFixed(2)}%`
 
 const COLS = [
-  { key: 'impressions', label: 'Impr.',   fmt: NUM,  width: 90 },
-  { key: 'clicks',      label: 'Cliques', fmt: NUM,  width: 80 },
-  { key: 'ctr',         label: 'CTR',     fmt: PCT,  width: 70 },
-  { key: 'cpc',         label: 'CPC',     fmt: BRL,  width: 90 },
-  { key: 'spend',       label: 'Gasto',   fmt: BRL,  width: 100, accent: true },
-  { key: 'leads',       label: 'Leads',   fmt: NUM,  width: 70 },
-  { key: 'lav',         label: 'LAV',     fmt: NUM,  width: 70 },
-  { key: 'cpl',         label: 'CPL',     fmt: BRL,  width: 90 },
-  { key: 'cplav',       label: 'CPLAV',   fmt: BRL,  width: 90 },
+  { key: 'impressions', label: 'Impr.', fmt: NUM, width: 90 },
+  { key: 'clicks', label: 'Cliques', fmt: NUM, width: 80 },
+  { key: 'ctr', label: 'CTR', fmt: PCT, width: 70 },
+  { key: 'cpc', label: 'CPC', fmt: BRL, width: 90 },
+  { key: 'spend', label: 'Gasto', fmt: BRL, width: 100, accent: true },
+  { key: 'leads', label: 'Leads', fmt: NUM, width: 70 },
+  { key: 'lav', label: 'LAV', fmt: NUM, width: 70 },
+  { key: 'cpl', label: 'CPL', fmt: BRL, width: 90 },
+  { key: 'cplav', label: 'CPLAV', fmt: BRL, width: 90 },
 ]
 
 function fmtDay(dateStr) {
@@ -100,13 +100,56 @@ function ComboChart({ title, data, barKey, barLabel, barFmt, lineKey, lineFmt })
   )
 }
 
-function Thumb({ url }) {
+// Medidas nativas do preview_iframe.php (formato INSTAGRAM_STANDARD).
+// O card inteiro (cabeçalho + imagem/vídeo + texto + botões) tem ~320px de
+// largura nativa. A altura do conteúdo varia por anúncio (foto x vídeo x
+// carrossel, legendas mais longas etc.):
+// - IFRAME_NATIVE_HEIGHT é a altura "típica" que usamos pra escalar o preview
+//   em si — cobre a maioria dos casos sem sobrar espaço em branco visível.
+// - BOX_NATIVE_HEIGHT é a altura da caixa (um pouco maior, com folga) onde
+//   esse preview fica centralizado — conteúdos mais altos (vídeo/carrossel)
+//   ficam com o excesso cortado igualmente em cima e embaixo, em vez de só
+//   embaixo.
+const PREVIEW_CARD_WIDTH = 320
+const IFRAME_NATIVE_HEIGHT = 620
+const THUMB_WIDTH = 220
+const THUMB_HEIGHT = 450
+const PREVIEW_SCALE = THUMB_WIDTH / PREVIEW_CARD_WIDTH
+
+function Thumb({ url, previewSrc }) {
+  if (previewSrc) {
+    return (
+      <div
+        style={{
+          width: THUMB_WIDTH, height: THUMB_HEIGHT, borderRadius: 12, overflow: 'hidden',
+          flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        <iframe
+          src={previewSrc}
+          title="Preview do anúncio"
+          scrolling="no"
+          sandbox="allow-scripts allow-same-origin"
+          style={{
+            flexShrink: 0,
+            width: PREVIEW_CARD_WIDTH,
+            height: IFRAME_NATIVE_HEIGHT,
+            border: 'none',
+            transform: `scale(${PREVIEW_SCALE})`,
+            transformOrigin: 'center center',
+            pointerEvents: 'none',
+          }}
+        />
+      </div>
+    )
+  }
   if (url) {
-    return <img src={url} alt="" style={{ width: 168, height: 168, borderRadius: 12, objectFit: 'cover', flexShrink: 0 }} />
+    return <img src={url} alt="" style={{ width: THUMB_WIDTH, height: THUMB_WIDTH, borderRadius: 12, objectFit: 'cover', flexShrink: 0 }} />
   }
   return (
     <div style={{
-      width: 168, height: 168, borderRadius: 12, background: 'var(--bg)',
+      width: THUMB_WIDTH, height: THUMB_WIDTH, borderRadius: 12, background: 'var(--bg)',
       border: '0.5px solid var(--border)', display: 'flex', alignItems: 'center',
       justifyContent: 'center', flexShrink: 0, fontSize: 32, color: 'var(--hint)',
     }}>
@@ -125,8 +168,8 @@ function Row({ row, level, hasChildren, expanded, onToggle, showThumb, onFocus, 
       <td style={{ padding: showThumb ? '12px 10px' : '8px 10px', paddingLeft: 10 + indent, fontWeight: weight, color: 'var(--text)', verticalAlign: 'middle' }}>
         {showThumb ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
-            <Thumb url={row.thumbnail_url} />
             <span style={{ whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.3 }}>{row.name}</span>
+            <Thumb url={row.thumbnail_url} previewSrc={row.preview_src} />
             <button
               onClick={onFocus}
               style={{
