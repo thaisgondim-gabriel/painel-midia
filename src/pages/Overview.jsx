@@ -322,6 +322,18 @@ export function Overview({ data, yearData, periodLabel, selectedState, selectedN
     channelRows.push({ name: 'Google Ads', ...google, leads, color: '#EA4335' })
   }
 
+  // Segmento Google Ads - WhatsApp: já somado dentro de "Google Ads" acima (macro),
+  // mas exibido como sub-linha segmentável separadamente (não soma de novo nos totais).
+  // Investimento e CPL usam o gasto REAL do recurso "Mensagem" (Google Ads Assets report),
+  // não a métrica de "conversão" do próprio Google (que conta cliques, não conversas reais).
+  const googleWhatsAppLeads = selectedNetwork !== 'Meta'
+    ? (selectedState === 'ALL' ? (hubspot.googleWhatsAppLeads || 0) : (hubspot.byStateGoogleWhatsApp?.[selectedState] || 0))
+    : 0
+  const googleWhatsAppSpend = selectedNetwork !== 'Meta'
+    ? (selectedState === 'ALL' ? (hubspot.googleWhatsAppSpend || 0) : (hubspot.byStateGoogleWhatsAppSpend?.[selectedState] || 0))
+    : 0
+  const googleWhatsAppCpl = googleWhatsAppLeads > 0 ? googleWhatsAppSpend / googleWhatsAppLeads : 0
+
   const channelTotals = channelRows.reduce((acc, r) => ({
     spend: acc.spend + (r.spend || 0),
     leads: acc.leads + (r.leads || 0),
@@ -572,6 +584,24 @@ export function Overview({ data, yearData, periodLabel, selectedState, selectedN
                   </tr>
                 )
               })}
+              {googleWhatsAppLeads > 0 && (
+                <tr style={{ borderBottom: '0.5px solid var(--border)' }}>
+                  <td style={{ padding: '8px 16px 8px 32px', fontWeight: 500, color: 'var(--muted)', fontSize: 11 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#25D366', flexShrink: 0 }} />
+                      ↳ WhatsApp (incluso no total acima)
+                    </div>
+                  </td>
+                  <td style={{ padding: '8px 16px', textAlign: 'center', color: 'var(--muted)' }}>R$ {BRL(googleWhatsAppSpend)}</td>
+                  <td style={{ padding: '8px 16px', textAlign: 'center', color: 'var(--muted)' }}>{NUM(googleWhatsAppLeads)}</td>
+                  <td style={{ padding: '8px 16px', textAlign: 'center', color: googleWhatsAppCpl > 40 ? 'var(--red)' : 'var(--muted)', fontWeight: 600 }}>R$ {BRL(googleWhatsAppCpl)}</td>
+                  <td style={{ padding: '8px 16px', textAlign: 'center', color: 'var(--hint)' }}>—</td>
+                  <td style={{ padding: '8px 16px', textAlign: 'center', color: 'var(--hint)' }}>—</td>
+                  <td style={{ padding: '8px 16px', textAlign: 'center', color: 'var(--hint)' }}>—</td>
+                  <td style={{ padding: '8px 16px', textAlign: 'center', color: 'var(--hint)' }}>—</td>
+                  <td style={{ padding: '8px 16px', textAlign: 'center', color: 'var(--hint)' }}>—</td>
+                </tr>
+              )}
               {channelRows.length > 0 && (
                 <tr style={{ background: 'var(--bg)' }}>
                   <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 700, color: 'var(--text)' }}>Total</td>

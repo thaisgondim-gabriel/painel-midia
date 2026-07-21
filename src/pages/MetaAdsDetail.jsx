@@ -1,4 +1,4 @@
-import { useState, useMemo, Fragment } from 'react'
+import { useState, useMemo, useRef, useEffect, Fragment } from 'react'
 import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from 'recharts'
 import { getCampaignState } from '../hooks/useData.js'
 
@@ -21,9 +21,19 @@ const COLS = [
   { key: 'spend', label: 'Gasto', fmt: BRL, width: 100, accent: true },
   { key: 'leads', label: 'Leads', fmt: NUM, width: 70 },
   { key: 'lav', label: 'LAV', fmt: NUM, width: 70 },
+  { key: 'lavPct', label: 'LAV %', fmt: PCT, width: 75 },
   { key: 'cpl', label: 'CPL', fmt: BRL, width: 90 },
   { key: 'cplav', label: 'CPLAV', fmt: BRL, width: 90 },
 ]
+
+const COLS_BY_KEY = Object.fromEntries(COLS.map(c => [c.key, c]))
+
+// As 4 métricas que ficam sempre visíveis no card do anúncio; o resto só
+// aparece quando o card é expandido (clique em "Mostrar tudo").
+const CARD_PRIMARY_KEYS = ['spend', 'leads', 'cpl', 'ctr']
+// lavPct fica de fora daqui de propósito: ela é mostrada embutida ao lado
+// do valor de LAV (ver MetricCell), não como uma célula própria no grid.
+const CARD_EXTRA_KEYS = COLS.map(c => c.key).filter(k => !CARD_PRIMARY_KEYS.includes(k) && k !== 'lavPct')
 
 function fmtDay(dateStr) {
   if (!dateStr) return ''
@@ -103,106 +113,120 @@ function ComboChart({ title, data, barKey, barLabel, barFmt, lineKey, lineFmt })
 // Medidas nativas do preview_iframe.php (formato INSTAGRAM_STANDARD).
 // O card inteiro (cabeçalho + imagem/vídeo + texto + botões) tem ~320px de
 // largura nativa. A altura do conteúdo varia por anúncio (foto x vídeo x
-// carrossel, legendas mais longas etc.):
-// - IFRAME_NATIVE_HEIGHT é a altura "típica" que usamos pra escalar o preview
-//   em si — cobre a maioria dos casos sem sobrar espaço em branco visível.
-// - BOX_NATIVE_HEIGHT é a altura da caixa (um pouco maior, com folga) onde
-//   esse preview fica centralizado — conteúdos mais altos (vídeo/carrossel)
-//   ficam com o excesso cortado igualmente em cima e embaixo, em vez de só
-//   embaixo.
+// carrossel, legendas mais longas etc.) — IFRAME_NATIVE_HEIGHT é a altura
+// "típica" usada pra escalar o preview em si.
+// THUMB_WIDTH/THUMB_HEIGHT definem a proporção (retrato, ~220:450) do box
+// da miniatura; como agora o card de anúncio é responsivo (grid de 4
+// colunas), a largura real é medida via ResizeObserver e a escala do
+// iframe é recalculada a partir dela — ver useCardWidth/Thumb abaixo.
 const PREVIEW_CARD_WIDTH = 320
 const IFRAME_NATIVE_HEIGHT = 620
 const THUMB_WIDTH = 220
 const THUMB_HEIGHT = 450
-const PREVIEW_SCALE = THUMB_WIDTH / PREVIEW_CARD_WIDTH
+const THUMB_ASPECT = THUMB_HEIGHT / THUMB_WIDTH
+
+// Mede a largura real (em px) do elemento pra escalar o preview do
+// iframe proporcionalmente — necessário porque a largura do card agora
+// depende do grid responsivo, não é mais um valor fixo.
+function useMeasuredWidth() {
+  const ref = useRef(null)
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = () => setWidth(el.offsetWidth)
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, width]
+}
 
 function Thumb({ url, previewSrc }) {
+  const [wrapRef, width] = useMeasuredWidth()
+  const boxWidth = width || THUMB_WIDTH
+  const boxHeight = boxWidth * THUMB_ASPECT
+  const scale = boxWidth / PREVIEW_CARD_WIDTH
+
   if (previewSrc) {
     return (
       <div
+        ref={wrapRef}
         style={{
-          width: THUMB_WIDTH, height: THUMB_HEIGHT, borderRadius: 12, overflow: 'hidden',
-          flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: '100%', height: boxHeight, borderRadius: '12px 12px 0 0', overflow: 'hidden',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)',
         }}
       >
-        <iframe
-          src={previewSrc}
-          title="Preview do anúncio"
-          scrolling="no"
-          sandbox="allow-scripts allow-same-origin"
-          style={{
-            flexShrink: 0,
-            width: PREVIEW_CARD_WIDTH,
-            height: IFRAME_NATIVE_HEIGHT,
-            border: 'none',
-            transform: `scale(${PREVIEW_SCALE})`,
-            transformOrigin: 'center center',
-            pointerEvents: 'none',
-          }}
-        />
+        {width > 0 && (
+          <iframe
+            src={previewSrc}
+            title="Preview do anúncio"
+            scrolling="no"
+            sandbox="allow-scripts allow-same-origin"
+            style={{
+              flexShrink: 0,
+              width: PREVIEW_CARD_WIDTH,
+              height: IFRAME_NATIVE_HEIGHT,
+              border: 'none',
+              transform: `scale(${scale})`,
+              transformOrigin: 'center center',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
       </div>
     )
   }
   if (url) {
-    return <img src={url} alt="" style={{ width: THUMB_WIDTH, height: THUMB_WIDTH, borderRadius: 12, objectFit: 'cover', flexShrink: 0 }} />
+    return (
+      <div ref={wrapRef} style={{ width: '100%', height: boxHeight, borderRadius: '12px 12px 0 0', overflow: 'hidden' }}>
+        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      </div>
+    )
   }
   return (
-    <div style={{
-      width: THUMB_WIDTH, height: THUMB_WIDTH, borderRadius: 12, background: 'var(--bg)',
-      border: '0.5px solid var(--border)', display: 'flex', alignItems: 'center',
-      justifyContent: 'center', flexShrink: 0, fontSize: 32, color: 'var(--hint)',
-    }}>
+    <div
+      ref={wrapRef}
+      style={{
+        width: '100%', height: boxHeight, borderRadius: '12px 12px 0 0', background: 'var(--bg)',
+        border: '0.5px solid var(--border)', borderBottom: 'none', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', fontSize: 32, color: 'var(--hint)',
+      }}
+    >
       🖼
     </div>
   )
 }
 
-function Row({ row, level, hasChildren, expanded, onToggle, showThumb, onFocus, isFocused }) {
+// Linha de tabela colapsável, usada só pra campanha (nível 0) e conjunto
+// (nível 1). Anúncios não usam mais Row — viram cards no grid (ver AdCard).
+function Row({ row, level, hasChildren, expanded, onToggle }) {
   const indent = level * 22
-  const bg = isFocused ? 'rgba(26,111,232,0.10)' : level === 0 ? 'rgba(10,252,51,0.06)' : 'transparent'
-  const weight = level === 0 ? 700 : level === 1 ? 600 : 400
+  const bg = level === 0 ? 'rgba(10,252,51,0.06)' : 'transparent'
+  const weight = level === 0 ? 700 : 600
 
   return (
     <tr style={{ background: bg, borderBottom: '0.5px solid var(--border)' }}>
-      <td style={{ padding: showThumb ? '12px 10px' : '8px 10px', paddingLeft: 10 + indent, fontWeight: weight, color: 'var(--text)', verticalAlign: 'middle' }}>
-        {showThumb ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
-            <span style={{ whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.3 }}>{row.name}</span>
-            <Thumb url={row.thumbnail_url} previewSrc={row.preview_src} />
+      <td style={{ padding: '8px 10px', paddingLeft: 10 + indent, fontWeight: weight, color: 'var(--text)', verticalAlign: 'middle' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          {hasChildren ? (
             <button
-              onClick={onFocus}
+              onClick={onToggle}
+              aria-label={expanded ? 'Recolher' : 'Expandir'}
               style={{
-                fontFamily: 'DM Sans, sans-serif', fontSize: 9, fontWeight: 600, cursor: 'pointer',
-                padding: '3px 8px', borderRadius: 5,
-                border: `0.5px solid ${isFocused ? '#1A6FE8' : 'var(--border)'}`,
-                background: isFocused ? '#1A6FE8' : 'transparent',
-                color: isFocused ? '#fff' : 'var(--muted)',
+                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                color: 'var(--muted)', fontSize: 11, width: 14, flexShrink: 0,
+                transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s',
               }}
             >
-              {isFocused ? '✓ Nos gráficos' : 'Ver nos gráficos'}
+              ▾
             </button>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-            {hasChildren ? (
-              <button
-                onClick={onToggle}
-                aria-label={expanded ? 'Recolher' : 'Expandir'}
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                  color: 'var(--muted)', fontSize: 11, width: 14, flexShrink: 0,
-                  transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s',
-                }}
-              >
-                ▾
-              </button>
-            ) : (
-              <span style={{ width: 14, flexShrink: 0 }} />
-            )}
-            <span style={{ whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.3 }}>{row.name}</span>
-          </div>
-        )}
+          ) : (
+            <span style={{ width: 14, flexShrink: 0 }} />
+          )}
+          <span style={{ whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.3 }}>{row.name}</span>
+        </div>
       </td>
       {COLS.map(c => (
         <td key={c.key} style={{ padding: '8px 10px', textAlign: 'center', color: c.accent ? 'var(--green)' : 'var(--text)', fontWeight: c.accent ? 600 : 400, verticalAlign: 'middle' }}>
@@ -211,6 +235,176 @@ function Row({ row, level, hasChildren, expanded, onToggle, showThumb, onFocus, 
       ))}
     </tr>
   )
+}
+
+// Comparação de tendência: últimos 7 dias vs 7 dias anteriores (dentro dos
+// 15 dias de `daily` disponíveis por anúncio). Só nos KPIs de entrega —
+// Gasto não leva seta.
+const TREND_WINDOW = 7
+const TREND_METRIC_KEYS = ['leads', 'cpl', 'ctr']
+
+// CPL é a única métrica de custo entre as que mostram seta: quando ele cai,
+// é uma melhora, então a seta boa (verde) aponta pra baixo.
+const COST_METRIC_KEYS = ['cpl']
+
+function sumWindow(daily, start, end) {
+  return daily.slice(start, end).reduce((acc, d) => {
+    acc.impressions += d.impressions || 0
+    acc.clicks += d.clicks || 0
+    acc.spend += d.spend || 0
+    acc.leads += d.leads || 0
+    return acc
+  }, { impressions: 0, clicks: 0, spend: 0, leads: 0 })
+}
+
+// Deriva CTR/CPL a partir dos totais agregados de cada janela (mais
+// correto do que fazer média das taxas diárias).
+function deriveMetrics(sums) {
+  return {
+    leads: sums.leads,
+    ctr: sums.impressions > 0 ? (sums.clicks / sums.impressions) * 100 : 0,
+    cpl: sums.leads > 0 ? sums.spend / sums.leads : 0,
+  }
+}
+
+// Retorna { [metricKey]: { direction: 'up' | 'down', diff } } comparando os
+// últimos TREND_WINDOW dias com os TREND_WINDOW dias anteriores, só pra
+// leads/cpl/ctr. `diff` é a diferença absoluta (não percentual): leads a
+// mais/a menos, R$ a mais/a menos de CPL, pontos percentuais de CTR.
+// Ausente quando não há 14 dias de histórico, os dois períodos são zero,
+// ou a variação relativa é desprezível (<1%, só pra decidir se mostra a
+// seta — o valor exibido continua sendo a diferença absoluta).
+function computeTrends(daily) {
+  if (!daily || daily.length < TREND_WINDOW * 2) return {}
+  const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date))
+  const recent = deriveMetrics(sumWindow(sorted, sorted.length - TREND_WINDOW, sorted.length))
+  const prior = deriveMetrics(sumWindow(sorted, sorted.length - TREND_WINDOW * 2, sorted.length - TREND_WINDOW))
+
+  const trends = {}
+  for (const key of TREND_METRIC_KEYS) {
+    const cur = recent[key], prev = prior[key]
+    if (prev === 0 && cur === 0) continue
+    const relChange = prev === 0 ? 1 : (cur - prev) / prev
+    if (Math.abs(relChange) < 0.01) continue
+    trends[key] = { direction: cur > prev ? 'up' : 'down', diff: cur - prev }
+  }
+  return trends
+}
+
+// Formata a diferença absoluta de cada métrica no seu próprio padrão.
+const DIFF_FMT = {
+  leads: (d) => NUM(Math.round(Math.abs(d))),
+  cpl: (d) => BRL(Math.abs(d)),
+  ctr: (d) => `${Math.abs(d).toFixed(1)} p.p.`,
+}
+
+function TrendArrow({ trend, colKey, costMetric }) {
+  if (!trend) return null
+  const isGood = costMetric ? trend.direction === 'down' : trend.direction === 'up'
+  const color = isGood ? '#159947' : '#ff4538'
+  const arrow = trend.direction === 'up' ? '▲' : '▼'
+  const sign = trend.diff > 0 ? '+' : '-'
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 9, fontWeight: 700, color, whiteSpace: 'nowrap' }}>
+      {arrow} {sign}{DIFF_FMT[colKey](trend.diff)}
+    </span>
+  )
+}
+
+function MetricCell({ colKey, row, trend }) {
+  const col = COLS_BY_KEY[colKey]
+  const value = row[colKey]
+  return (
+    <div>
+      <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--muted)', fontWeight: 600 }}>{col.label}</span>
+      <p style={{ display: 'flex', alignItems: 'baseline', gap: 5, fontSize: 12, fontWeight: 600, color: col.accent ? 'var(--green)' : 'var(--text)', margin: '2px 0 0' }}>
+        {col.fmt(value)}
+        {colKey === 'lav' ? (
+          // Percentual de LAV sobre o total de contatos (leads) do mesmo
+          // recorte — embutido ao lado do número, no mesmo estilo visual
+          // das setas de tendência das outras métricas.
+          <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+            {PCT(row.lavPct)} dos leads
+          </span>
+        ) : (
+          <TrendArrow trend={trend} colKey={colKey} costMetric={COST_METRIC_KEYS.includes(colKey)} />
+        )}
+      </p>
+    </div>
+  )
+}
+
+// Card de anúncio no grid: preview em cima, nome, 4 métricas principais
+// sempre visíveis (Gasto/Leads/CPL/CTR) e o resto expandível por clique.
+function AdCard({ ad, isFocused, onFocus, expanded, onToggleExpand }) {
+  const trends = useMemo(() => computeTrends(ad.daily), [ad.daily])
+
+  return (
+    <div
+      style={{
+        border: isFocused ? '2px solid #1A6FE8' : '0.5px solid var(--border)',
+        borderRadius: 12,
+        overflow: 'hidden',
+        background: 'var(--surface)',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <Thumb url={ad.thumbnail_url} previewSrc={ad.preview_src} />
+      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
+        <p
+          style={{
+            fontSize: 12, fontWeight: 600, color: 'var(--text)', margin: 0, lineHeight: 1.3,
+            ...(expanded ? {} : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }),
+          }}
+          title={ad.name}
+        >
+          {ad.name}
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px' }}>
+          {CARD_PRIMARY_KEYS.map(k => <MetricCell key={k} colKey={k} row={ad} trend={trends[k]} />)}
+        </div>
+
+        {expanded && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px', paddingTop: 8, borderTop: '0.5px solid var(--border)' }}>
+            {CARD_EXTRA_KEYS.map(k => <MetricCell key={k} colKey={k} row={ad} trend={trends[k]} />)}
+          </div>
+        )}
+
+        <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 4 }}>
+          <button
+            onClick={onToggleExpand}
+            style={{
+              fontFamily: 'DM Sans, sans-serif', fontSize: 10, cursor: 'pointer', padding: 0,
+              border: 'none', background: 'none', color: 'var(--hint)', textDecoration: 'underline',
+            }}
+          >
+            {expanded ? 'Mostrar menos' : 'Mostrar tudo'}
+          </button>
+          <button
+            onClick={onFocus}
+            style={{
+              fontFamily: 'DM Sans, sans-serif', fontSize: 9, fontWeight: 600, cursor: 'pointer',
+              padding: '3px 8px', borderRadius: 5,
+              border: `0.5px solid ${isFocused ? '#1A6FE8' : 'var(--border)'}`,
+              background: isFocused ? '#1A6FE8' : 'transparent',
+              color: isFocused ? '#fff' : 'var(--muted)',
+            }}
+          >
+            {isFocused ? '✓ Nos gráficos' : 'Ver nos gráficos'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// LAV como percentual dos leads do mesmo recorte (campanha, conjunto ou
+// anúncio) — usado tanto na coluna nova da tabela quanto no badge embutido
+// no card. Cada nível já traz `lav`/`leads` agregados vindos do backend.
+function addLavPct(row) {
+  return { ...row, lavPct: row.leads > 0 ? ((row.lav || 0) / row.leads) * 100 : 0 }
 }
 
 function matchesSearch(row, term) {
@@ -240,6 +434,7 @@ export function MetaAdsDetail({ detailData, loading, selectedState, periodLabel 
   const [search, setSearch] = useState('')
   const [expandedCampaigns, setExpandedCampaigns] = useState({})
   const [expandedAdsets, setExpandedAdsets] = useState({})
+  const [expandedCards, setExpandedCards] = useState({})
   const [focusedAd, setFocusedAd] = useState(null) // { id, name } | null
 
   const campaigns = useMemo(() => {
@@ -247,7 +442,20 @@ export function MetaAdsDetail({ detailData, loading, selectedState, periodLabel 
     const byState = selectedState === 'ALL'
       ? detailData.campaigns
       : detailData.campaigns.filter(c => (c.state || getCampaignState(c.name)) === selectedState)
-    return filterTree(byState, search.trim().toLowerCase())
+    const filtered = filterTree(byState, search.trim().toLowerCase())
+    // Campanhas e conjuntos ordenados por nome; cards de anúncio continuam
+    // ordenados por leads (maior pra menor) dentro de cada conjunto.
+    return filtered
+      .map(c => addLavPct({
+        ...c,
+        adsets: [...c.adsets]
+          .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+          .map(as => addLavPct({
+            ...as,
+            ads: [...as.ads].sort((a, b) => (b.leads || 0) - (a.leads || 0)).map(addLavPct),
+          })),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
   }, [detailData, selectedState, search])
 
   const totals = useMemo(() => {
@@ -280,6 +488,7 @@ export function MetaAdsDetail({ detailData, loading, selectedState, periodLabel 
 
   const toggleCampaign = (id) => setExpandedCampaigns(s => ({ ...s, [id]: !s[id] }))
   const toggleAdset = (id) => setExpandedAdsets(s => ({ ...s, [id]: !s[id] }))
+  const toggleCardExpand = (id) => setExpandedCards(s => ({ ...s, [id]: !s[id] }))
   const toggleFocus = (ad) => setFocusedAd(f => (f && f.id === ad.id) ? null : { id: ad.id, name: ad.name })
 
   const kpis = [
@@ -327,7 +536,7 @@ export function MetaAdsDetail({ detailData, loading, selectedState, periodLabel 
         <ComboChart title={`Impressões x CTR — últimos 15 dias${focusedAd ? ' (anúncio)' : ''}`} data={trendData} barKey="impressions" barLabel="Impressões" barFmt={NUM} lineKey="ctr" lineFmt={PCT} />
       </div>
 
-      {/* Tabela hierárquica */}
+      {/* Tabela hierárquica: campanha e conjunto ficam como linhas colapsáveis; anúncios viram um grid de cards */}
       <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '14px 20px', borderBottom: '0.5px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div>
@@ -362,18 +571,33 @@ export function MetaAdsDetail({ detailData, loading, selectedState, periodLabel 
             </thead>
             <tbody>
               {campaigns.map(c => {
-                const cExpanded = expandedCampaigns[c.id] !== false // expandido por padrão
+                const cExpanded = expandedCampaigns[c.id] === true // fechado por padrão
                 return (
                   <Fragment key={c.id}>
-                    <Row row={c} level={0} hasChildren onToggle={() => toggleCampaign(c.id)} expanded={cExpanded} showThumb={false} />
+                    <Row row={c} level={0} hasChildren onToggle={() => toggleCampaign(c.id)} expanded={cExpanded} />
                     {cExpanded && c.adsets.map(as => {
-                      const asExpanded = expandedAdsets[as.id] !== false
+                      const asExpanded = expandedAdsets[as.id] === true // fechado por padrão
                       return (
                         <Fragment key={as.id}>
-                          <Row row={as} level={1} hasChildren onToggle={() => toggleAdset(as.id)} expanded={asExpanded} showThumb={false} />
-                          {asExpanded && as.ads.map(ad => (
-                            <Row key={ad.id} row={ad} level={2} hasChildren={false} onToggle={() => {}} expanded={false} showThumb onFocus={() => toggleFocus(ad)} isFocused={focusedAd?.id === ad.id} />
-                          ))}
+                          <Row row={as} level={1} hasChildren onToggle={() => toggleAdset(as.id)} expanded={asExpanded} />
+                          {asExpanded && (
+                            <tr>
+                              <td colSpan={COLS.length + 1} style={{ padding: '4px 20px 20px 52px', background: 'var(--bg)' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
+                                  {as.ads.map(ad => (
+                                    <AdCard
+                                      key={ad.id}
+                                      ad={ad}
+                                      isFocused={focusedAd?.id === ad.id}
+                                      onFocus={() => toggleFocus(ad)}
+                                      expanded={!!expandedCards[ad.id]}
+                                      onToggleExpand={() => toggleCardExpand(ad.id)}
+                                    />
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
                         </Fragment>
                       )
                     })}

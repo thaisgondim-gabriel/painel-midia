@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import { useData, useYearData, useMetaAdsDetail, useComunidadeData, useComunidadeYearData, MONTHS, resolveMonths, resolveDateRange } from './hooks/useData.js'
 import { Overview } from './pages/Overview.jsx'
 import { MetaAdsDetail } from './pages/MetaAdsDetail.jsx'
+import { GoogleAdsDetail } from './pages/GoogleAdsDetail.jsx'
 import { ComunidadeOverview } from './pages/ComunidadeOverview.jsx'
 
 const STATES = [
@@ -35,12 +36,39 @@ const SECTIONS = [
 ]
 
 const SUBVIEWS = [
-  { key: 'overview', label: 'Visão geral' },
-  { key: 'ads',      label: 'Detalhamento Meta Ads' },
+  { key: 'overview',   label: 'Visão geral' },
+  { key: 'ads',        label: 'Detalhamento Meta Ads' },
+  { key: 'googleAds',  label: 'Detalhamento Google Ads' },
 ]
 
 const MONTH_NAMES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 const WEEKDAYS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S']
+
+// Endpoint do webhook de Detalhamento Google Ads. Respeita o filtro de
+// período do topo (igual ao Meta) — envia startDate/endDate na querystring.
+// O backend só cai no default de "ano inteiro" quando esses parâmetros não
+// são enviados (ex: chamada direta via curl/teste).
+const GOOGLE_ADS_DETAIL_URL = 'https://n8n.gabriel.com.br/webhook/painel-midia-ads-detail-google'
+
+function useGoogleAdsDetail(dateRange) {
+  const [detailData, setDetailData] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(true)
+  const [lastFetch, setLastFetch] = useState(null)
+
+  const load = () => {
+    setDetailLoading(true)
+    const params = new URLSearchParams({ startDate: dateRange.startDate, endDate: dateRange.endDate })
+    fetch(`${GOOGLE_ADS_DETAIL_URL}?${params}`)
+      .then(r => r.json())
+      .then(json => { setDetailData(json); setLastFetch(new Date()) })
+      .catch(() => {})
+      .finally(() => setDetailLoading(false))
+  }
+
+  useEffect(() => { load() }, [dateRange.startDate, dateRange.endDate])
+
+  return { detailData, detailLoading, lastFetch, refresh: load }
+}
 
 function fmt(date) {
   if (!date) return '—'
@@ -313,10 +341,11 @@ export default function App() {
   const [selectedNetwork, setSelectedNetwork] = useState('ALL')
 
   // Hierarquia de navegação: seção de topo (Mídia Paga / Comunidade) na
-  // sidebar, e sub-aba (Visão geral / Detalhamento Meta Ads) só dentro de
-  // Mídia Paga. `view` deriva os dois pra manter o resto da lógica igual.
+  // sidebar, e sub-aba (Visão geral / Detalhamento Meta Ads / Detalhamento
+  // Google Ads) só dentro de Mídia Paga. `view` deriva os dois pra manter o
+  // resto da lógica igual.
   const [section, setSection] = useState('midiaPaga') // 'midiaPaga' | 'comunidade'
-  const [subView, setSubView] = useState('overview')  // 'overview' | 'ads' (só usado dentro de midiaPaga)
+  const [subView, setSubView] = useState('overview')  // 'overview' | 'ads' | 'googleAds' (só usado dentro de midiaPaga)
   const view = section === 'comunidade' ? 'comunidade' : subView
 
   const dateRange = useMemo(() => ({ startDate, endDate }), [startDate, endDate])
@@ -376,6 +405,11 @@ export default function App() {
   // `view === 'ads'`.
   const { detailData, detailLoading } = useMetaAdsDetail(dateRange)
 
+  // Detalhamento de Google Ads — página separada, própria. Respeita o
+  // filtro de período do topo, igual ao Meta. Chamado sempre (regra dos
+  // hooks), só é renderizado quando `view === 'googleAds'`.
+  const { detailData: googleDetailData, detailLoading: googleDetailLoading, lastFetch: googleDetailLastFetch, refresh: refreshGoogleDetail } = useGoogleAdsDetail(dateRange)
+
   const btnBase = {
     border: 'none', cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
     fontSize: 12, fontWeight: 600, borderRadius: 8, transition: 'all 0.15s',
@@ -392,6 +426,13 @@ export default function App() {
     maxWidth: MAX_WIDTH, margin: '0 auto', padding: '0 28px',
     display: 'flex', alignItems: 'center', width: '100%', boxSizing: 'border-box',
   }
+
+  // Header (lastFetch/loading/refresh) segue o mesmo padrão pras 3 seções
+  // "dinâmicas": comunidade, googleAds, e o resto (overview/ads, que
+  // compartilham o fetch principal `data`).
+  const headerLastFetch = view === 'comunidade' ? comunidadeLastFetch : view === 'googleAds' ? googleDetailLastFetch : lastFetch
+  const headerLoading = view === 'comunidade' ? comunidadeLoading : view === 'googleAds' ? googleDetailLoading : loading
+  const headerRefresh = view === 'comunidade' ? refreshComunidade : view === 'googleAds' ? refreshGoogleDetail : refresh
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', fontFamily: 'DM Sans, sans-serif', display: 'flex' }}>
@@ -452,14 +493,14 @@ export default function App() {
               )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {(view === 'comunidade' ? comunidadeLastFetch : lastFetch) && (
-                <span style={{ fontSize: 11, color: 'var(--hint)' }}>Atualizado às {fmt(view === 'comunidade' ? comunidadeLastFetch : lastFetch)}</span>
+              {headerLastFetch && (
+                <span style={{ fontSize: 11, color: 'var(--hint)' }}>Atualizado às {fmt(headerLastFetch)}</span>
               )}
               <button onClick={handleReset} disabled={loading || comunidadeLoading} style={{ ...btnBase, padding: '5px 12px', background: 'transparent', border: '0.5px solid var(--border)', color: 'var(--muted)', opacity: (loading || comunidadeLoading) ? 0.5 : 1 }}>
                 Redefinir
               </button>
-              <button onClick={view === 'comunidade' ? refreshComunidade : refresh} disabled={view === 'comunidade' ? comunidadeLoading : loading} style={{ ...btnBase, padding: '5px 12px', background: 'transparent', border: '0.5px solid var(--border)', color: 'var(--muted)', opacity: (view === 'comunidade' ? comunidadeLoading : loading) ? 0.5 : 1 }}>
-                {(view === 'comunidade' ? comunidadeLoading : loading) ? 'Atualizando…' : '↻ Atualizar'}
+              <button onClick={headerRefresh} disabled={headerLoading} style={{ ...btnBase, padding: '5px 12px', background: 'transparent', border: '0.5px solid var(--border)', color: 'var(--muted)', opacity: headerLoading ? 0.5 : 1 }}>
+                {headerLoading ? 'Atualizando…' : '↻ Atualizar'}
               </button>
             </div>
           </div>
@@ -521,7 +562,7 @@ export default function App() {
             })}
           </div>
 
-          {/* Rede — só faz sentido na Visão geral, já que Detalhamento é Meta-only e Comunidade não tem rede paga */}
+          {/* Rede — só faz sentido na Visão geral, já que Detalhamento é rede-única (Meta ou Google) e Comunidade não tem rede paga */}
           {view === 'overview' && (
             <>
               <div style={{ width: 1, height: 20, background: 'var(--border)' }} />
@@ -597,6 +638,31 @@ export default function App() {
             selectedState={selectedState}
             periodLabel={periodLabel}
           />
+        )}
+
+        {view === 'googleAds' && (
+          <>
+            {googleDetailLoading && googleDetailData && (
+              <div style={{ position: 'absolute', inset: 0, zIndex: 10, background: 'rgba(0,0,0,0.18)', borderRadius: 12, backdropFilter: 'blur(1.5px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 40 }}>
+                <div style={{ background: 'var(--surface)', border: '0.5px solid var(--border)', borderRadius: 12, padding: '14px 22px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid var(--border)', borderTopColor: '#0afc33', animation: 'spin 0.7s linear infinite' }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Atualizando dados…</span>
+                </div>
+              </div>
+            )}
+            {googleDetailLoading && !googleDetailData && (
+              <div style={{ textAlign: 'center', padding: '80px 0', color: 'var(--hint)', fontSize: 13 }}>Buscando detalhamento do Google Ads…</div>
+            )}
+            {googleDetailData && (
+              <GoogleAdsDetail
+                detailData={googleDetailData}
+                loading={googleDetailLoading}
+                selectedState={selectedState}
+                periodLabel={periodLabel}
+                dateRange={dateRange}
+              />
+            )}
+          </>
         )}
       </main>
       </div>
